@@ -1,0 +1,4 @@
+ABC D E FG
+AB  C D
+  A   B  C D  
+   ABC     

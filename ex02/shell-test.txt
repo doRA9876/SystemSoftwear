@@ -1,0 +1,5 @@
+echo jaist > name
+ echo    jaist>name
+grep foo < bar > junk
+grep foo  < bar >
+grep foo  < bar >junk

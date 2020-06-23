@@ -1,0 +1,4 @@
+grep foo<bar| grep junk>baz | echo jaist> nam
+grep foo < bar  | grep junk   > baz | echo jaist> nam
+grep foo<bar>| grep junk>baz | echo jaist> nam
+grep foo<bar> name| grep junk>baz | echo jaist<
