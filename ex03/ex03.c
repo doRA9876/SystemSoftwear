@@ -4,67 +4,101 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 
-typedef struct FileInfo {
-  char* name;
-  char* date;
-  long size;
-  long inode;
-  struct FileInfo* next;
-} fileInfo_t;
+#define MAX_PATH_LEN 1024
 
-void addList(fileInfo_t** head, fileInfo_t* data);
-void showList(fileInfo_t* head);
+char* parseCmdArgs(int argc, char* argv[]);
+void getMode(mode_t mode, char* str);
 
-int main(int argc, char argv[]) {
-  fileInfo_t* HEAD = NULL;
+int main(int argc, char* argv[]) {
+  char* base_path = parseCmdArgs(argc, argv);
+  char path[MAX_PATH_LEN + 1];
   DIR* dp;
   struct dirent* dirp;
+  int path_len;
 
-  dp = opendir(".");
+  dp = opendir(base_path);
+  if (dp == NULL) {
+    perror(base_path);
+    return EXIT_FAILURE;
+  }
+
+  path_len = strlen(base_path);
+  if (path_len >= MAX_PATH_LEN) {
+    return EXIT_FAILURE;
+  }
+  strncpy(path, base_path, MAX_PATH_LEN);
+  if (path[path_len - 1] != '/') {
+    path[path_len] = '/';
+    path_len++;
+    path[path_len] = '\0';
+  }
+
   while ((dirp = readdir(dp)) != NULL) {
-    fileInfo_t* tmp = (fileInfo_t*)malloc(sizeof(fileInfo_t));
-    tmp->next = NULL;
-    tmp->name = (char*)malloc(sizeof(char) * (strlen(dirp->d_name) + 1));
-    strcpy(tmp->name, dirp->d_name);
-    addList(&HEAD, tmp);
+    // strncpy(&path[path_len], dirp->d_name, PATH_MAX - path_len);
+    struct stat buf;
+    if (!lstat(dirp->d_name, &buf)) {
+      // I-node
+      printf("%ld ", buf.st_ino);
+
+      // Date
+      char date[64];
+      strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S",
+               localtime(&buf.st_mtim.tv_sec));
+      printf("%s ", date);
+
+      // Size
+      printf("%5ld ", buf.st_size);
+
+      // Mode
+      char mode[11];
+      getMode(buf.st_mode, mode);
+      printf("%s ", mode);
+
+      // Name
+      printf("%s ", dirp->d_name);
+      printf("\n");
+    }
   }
   closedir(dp);
-
-  fileInfo_t* p = HEAD;
-  while (p != NULL) {
-    struct stat buf;
-    if (!stat(p->name, &buf)) {
-      p->inode = buf.st_ino;
-      printf("%d\n", buf.st_uid);
-    }
-    p = p->next;
-  }
-
-  showList(HEAD);
 
   return 0;
 }
 
-void addList(fileInfo_t** head, fileInfo_t* data) {
-  if (*head == NULL) {
-    *head = data;
-  } else {
-    fileInfo_t* p = *head;
-    while (p->next != NULL) {
-      p = p->next;
-    }
-
-    p->next = data;
+char* parseCmdArgs(int argc, char* argv[]) {
+  char* path = "./";
+  if (argc > 1) {
+    path = argv[1];
   }
+  return path;
 }
 
-void showList(fileInfo_t* head) {
-  fileInfo_t* p = head;
-  while (p != NULL) {
-    printf("name:%*s ", 8, p->name);
-    printf("inode:%d ", p->inode);
-    printf("\n");
-    p = p->next;
-  }
+void getMode(mode_t mode, char* str) {
+  str[0] = (S_ISBLK(mode))
+               ? 'b'
+               : (S_ISCHR(mode))
+                     ? 'c'
+                     : (S_ISDIR(mode))
+                           ? 'd'
+                           : (S_ISREG(mode))
+                                 ? '-'
+                                 : (S_ISLNK(mode))
+                                       ? 'l'
+                                       : (S_ISFIFO(mode))
+                                             ? 'p'
+                                             : (S_ISSOCK(mode)) ? 's' : '?';
+  str[1] = mode & S_IRUSR ? 'r' : '-';
+  str[2] = mode & S_IWUSR ? 'w' : '-';
+  str[3] = mode & S_ISUID ? (mode & S_IXUSR ? 's' : 'S')
+                          : (mode & S_IXUSR ? 'x' : '-');
+  str[4] = mode & S_IRGRP ? 'r' : '-';
+  str[5] = mode & S_IWGRP ? 'w' : '-';
+  str[6] = mode & S_ISGID ? (mode & S_IXGRP ? 's' : 'S')
+                          : (mode & S_IXGRP ? 'x' : '-');
+  str[7] = mode & S_IROTH ? 'r' : '-';
+  str[8] = mode & S_IWOTH ? 'w' : '-';
+  str[9] = mode & S_ISVTX ? (mode & S_IXOTH ? 't' : 'T')
+                          : (mode & S_IXOTH ? 'x' : '-');
+  str[10] = '\0';
 }
