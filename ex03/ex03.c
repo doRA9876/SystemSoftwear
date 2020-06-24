@@ -36,9 +36,10 @@ int main(int argc, char* argv[]) {
   }
 
   while ((dirp = readdir(dp)) != NULL) {
-    // strncpy(&path[path_len], dirp->d_name, PATH_MAX - path_len);
+    char parallel_path[MAX_PATH_LEN];
+    snprintf(parallel_path, MAX_PATH_LEN, "%s%s", path, dirp->d_name);
     struct stat buf;
-    if (!lstat(dirp->d_name, &buf)) {
+    if (!lstat(parallel_path, &buf)) {
       // I-node
       printf("%ld ", buf.st_ino);
 
