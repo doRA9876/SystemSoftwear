@@ -41,7 +41,7 @@ int main(int argc, char* argv[]) {
     struct stat buf;
     if (!lstat(parallel_path, &buf)) {
       // I-node
-      printf("%ld ", buf.st_ino);
+      printf("%9ld ", buf.st_ino);
 
       // Date
       char date[64];
