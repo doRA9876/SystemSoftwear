@@ -1,9 +1,9 @@
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
-#include <dirent.h>
 
 #define MAX_PATH_LEN 1024
 
@@ -75,8 +75,11 @@ char* parseCmdArgs(int argc, char* argv[]) {
 }
 
 void getMode(mode_t mode, char* str) {
-  str[0] = (S_ISBLK(mode)) ? 'b' : 
-           (S_ISCHR(mode)) ? 'c' : (S_ISDIR(mode))
+  str[0] = (S_ISBLK(mode))
+               ? 'b'
+               : (S_ISCHR(mode))
+                     ? 'c'
+                     : (S_ISDIR(mode))
                            ? 'd'
                            : (S_ISREG(mode))
                                  ? '-'

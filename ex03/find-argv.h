@@ -1,13 +1,14 @@
 typedef struct findArgs {
   // 2進数 0b001:name 0b010:type 0b100:print
-  char option_bit;
+  char option_flag;
 
   char* file_name;
-  unsigned char type_opt;
+  unsigned char file_type;
 
   int path_num;
   char** path;
 } findArgs_t;
+
 
 #define T_ISLNK 0b00000001
 #define T_ISREG 0b00000010
@@ -16,3 +17,7 @@ typedef struct findArgs {
 #define T_ISBLK 0b00010000
 #define T_ISFIFO 0b00100000
 #define T_ISSOCK 0b01000000
+
+#define OPT_NAME 0b00000001
+#define OPT_TYPE 0b00000010
+#define OPT_PRINT 0b00000100

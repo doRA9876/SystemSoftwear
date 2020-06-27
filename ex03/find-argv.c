@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <limits.h>
 
 int parseCmdArgs(int argc, char* argv[], findArgs_t* fa);
 unsigned char getTypeOpt(char* opt);
@@ -20,8 +21,8 @@ struct option longopts[] = {
 int parseCmdArgs(int argc, char* argv[], findArgs_t* fa) {
   opterr = 0;
 
-  fa->option_bit = 0;
-  fa->type_opt = 0;
+  fa->option_flag = 0;
+  fa->file_type = 0;
   fa->path_num = 0;
 
   char* tparam = NULL;
@@ -33,16 +34,16 @@ int parseCmdArgs(int argc, char* argv[], findArgs_t* fa) {
     printf("%d\n", opt);
     switch (opt) {
       case 'n':
-        fa->option_bit |= 0b001;
+        fa->option_flag |= OPT_NAME;
         fa->file_name = getName(optarg);
         break;
       case 't':
-        fa->option_bit |= 0b010;
-        fa->type_opt |= getTypeOpt(optarg);
+        fa->option_flag |= OPT_TYPE;
+        fa->file_type |= getTypeOpt(optarg);
         tparam = optarg;
         break;
       case 'p':
-        fa->option_bit |= 0b100;
+        fa->option_flag |= OPT_PRINT;
         break;
 
       default:
