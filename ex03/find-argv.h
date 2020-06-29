@@ -9,7 +9,7 @@ typedef struct findArgs {
   char** path;
 } findArgs_t;
 
-
+// for file type determination 
 #define T_ISLNK 0b00000001
 #define T_ISREG 0b00000010
 #define T_ISDIR 0b00000100
@@ -18,6 +18,7 @@ typedef struct findArgs {
 #define T_ISFIFO 0b00100000
 #define T_ISSOCK 0b01000000
 
+// for option determination
 #define OPT_NAME 0b00000001
 #define OPT_TYPE 0b00000010
 #define OPT_PRINT 0b00000100

@@ -1,13 +1,10 @@
-#include "find-argv.h"
-
-#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <getopt.h>
 #include <string.h>
-#include <unistd.h>
-#include <limits.h>
 
-int parseCmdArgs(int argc, char* argv[], findArgs_t* fa);
+#include "find-argv.h"
+
 unsigned char getTypeOpt(char* opt);
 char* getName(char* name);
 
@@ -18,6 +15,14 @@ struct option longopts[] = {
     {0, 0, 0, 0},
 };
 
+/**
+ * @brief コマンドライン引数からオプションと引数に分解。
+ * 
+ * @param argc コマンドライン引数の数 
+ * @param argv コマンドライン引数
+ * @param fa 構造体findArgs_tのポインタ
+ * @return int 成功時：0、失敗時：-1
+ */
 int parseCmdArgs(int argc, char* argv[], findArgs_t* fa) {
   opterr = 0;
 
@@ -30,7 +35,6 @@ int parseCmdArgs(int argc, char* argv[], findArgs_t* fa) {
   int longindex;
   while ((opt = getopt_long_only(argc, argv, "n:pt:", longopts, &longindex)) !=
          -1) {
-    // printf("%d %s\n", longindex, longopts[longindex].name);
     printf("%d\n", opt);
     switch (opt) {
       case 'n':
@@ -52,7 +56,6 @@ int parseCmdArgs(int argc, char* argv[], findArgs_t* fa) {
 
         if(optopt == 'n')
           printf("no argument to '-name'\n");
-        // printf("error! \'%c\' \'%c\'\n", opt, optopt);
         return -1;
     }
   }
@@ -69,6 +72,12 @@ int parseCmdArgs(int argc, char* argv[], findArgs_t* fa) {
   return 0;
 }
 
+/**
+ * @brief 構造体のメンバ変数file_nameに適切なメモリを取り、保存する
+ * 
+ * @param arg 引数に取った名前 
+ * @return char* 保存した名前
+ */
 char* getName(char* arg)
 {
   int length = strlen(arg) + 1;
@@ -77,6 +86,20 @@ char* getName(char* arg)
   return file_name;
 }
 
+/**
+ * @brief オプションの文字列を分解し、どのオプションが有効なのかを判定し構造体に保存
+ * 各オプションのフラグの位
+ * 1: normal file
+ * 2: directory
+ * 4: block device
+ * 8: character device
+ * 16: named pipe
+ * 32: symbolic link
+ * 64: socket
+ * 
+ * @param opt 引数に取ったオプションの文字列 
+ * @return unsigned char 各オプションのフラグを立てた値
+ */
 unsigned char getTypeOpt(char* opt) {
   unsigned char type_opt = 0;
   char* p = opt;
