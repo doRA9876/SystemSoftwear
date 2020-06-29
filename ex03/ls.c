@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <time.h>
 
 #define MAX_PATH_LEN 1024
