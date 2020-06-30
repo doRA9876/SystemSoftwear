@@ -83,7 +83,7 @@ void find(char* name, char* abs_path, unsigned char file_type, int opt_bit) {
 
     if (strcmp(dirp->d_name, current_dir) && strcmp(dirp->d_name, up_dir)) {
       struct stat buf;
-      if (!stat(path_plus, &buf)) {
+      if (!lstat(path_plus, &buf)) {
         //-print option
         if (opt_bit & OPT_PRINT) {
           printf("%s\n", path_plus);
