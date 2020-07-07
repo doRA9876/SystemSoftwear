@@ -36,7 +36,6 @@ const char* current_dir = ".";
 const char* up_dir = "..";
 
 int main(void) {
-  pid_t pid;
   int status;
   char buf[BUFSIZ];
 
@@ -47,53 +46,115 @@ int main(void) {
   }
 
   while (1) {
-    printf("%s $", cwd);
+    printf("%s $ ", cwd);
 
     if (fgets(buf, sizeof(buf), stdin) == NULL)
       break;
     chomp(buf);
 
+    if (buf[0] == '\0')
+      continue;
+
     word_t** h_list;
     int ik = merge_split_shell(&h_list, buf);
+    printf("%d\n", ik);
 
-    int argc = 0;
-    word_t* p = h_list[0];
-    while (p != NULL) {
-      if (p->token == ARGUMENT)
-        argc++;
-      p = p->next;
-    }
-
-    char** argv = (char**)malloc(sizeof(char*) * argc);
-    p = h_list[0];
-    for (int i = 0; i < argc; p = p->next) {
-      if (p->token == ARGUMENT) {
-        argv[i] = (char*)malloc(sizeof(char) * 32);
-        strcpy(argv[i], p->str);
-        i++;
+    if (ik < 2) {
+      //パイプ処理なし
+      int argc = 0;
+      word_t* p = h_list[0];
+      while (p != NULL) {
+        if (p->token == ARGUMENT)
+          argc++;
+        p = p->next;
       }
-    }
 
-    runBuiltInCmd(h_list[0]->str, argc, argv);
-
-    /*
-    for (int i = 0; i < ik; i++) {
-      word_t* p = h_list[i];
-      printf("ik:%d\n", i);
-      showWordList(p);
-
-      pid = fork();
-
-      if (pid == 0) {
-        execlp(p->str, p->str, (char*)NULL);
-        perror(p->str);
-        exit(1);
+      char** argv = (char**)malloc(sizeof(char*) * (argc + 1));
+      p = h_list[0];
+      for (int i = 0; i < argc; p = p->next) {
+        if (p->token == ARGUMENT) {
+          argv[i] = (char*)malloc(sizeof(char) * 32);
+          strcpy(argv[i], p->str);
+          i++;
+        }
       }
-    }
+      argv[argc] = NULL;
+      if (runBuiltInCmd(h_list[0]->str, argc, argv)) {
+        pid_t pid;
+        pid = fork();
+        if (pid == 0) {
+          execvp(h_list[0]->str, argv);
+        } else {
+          while (wait(&status) != -1)
+            ;
+        }
+      }
+    } else {
+      pid_t* pid = (pid_t*)malloc(sizeof(pid_t) * ik);
+      int fd[2];
 
-    while (wait(&status) != pid)
-      ;
-    */
+      if (pipe(fd) == -1) {
+        perror("pipe");
+        exit(EXIT_FAILURE);
+      }
+
+      for (int j = ik - 1; j > -1; j--) {
+        // printf("j:%d\n", j);
+        int argc = 0;
+        word_t* p = h_list[j];
+        while (p != NULL) {
+          if (p->token == ARGUMENT)
+            argc++;
+          p = p->next;
+        }
+
+        char** argv = (char**)malloc(sizeof(char*) * argc);
+        p = h_list[j];
+        for (int i = 0; i < argc; p = p->next) {
+          if (p->token == ARGUMENT) {
+            argv[i] = (char*)malloc(sizeof(char) * 32);
+            strcpy(argv[i], p->str);
+            i++;
+          }
+        }
+        argv[argc] = NULL;
+
+        showWordList(h_list[j]);
+        pid[j] = fork();
+        printf("%d\n", pid[j]);
+
+        if (pid[j] == 0) {
+          if (j == ik - 1) {
+            dup2(fd[0], STDIN_FILENO);
+            close(fd[0]);
+            close(fd[1]);
+          } else if (j == 0) {
+            dup2(fd[1], STDOUT_FILENO);
+            close(fd[0]);
+            close(fd[1]);
+          } else {
+            dup2(fd[0], STDIN_FILENO);
+            dup2(fd[1], STDOUT_FILENO);
+            close(fd[0]);
+            close(fd[1]);
+          }
+
+          if (!runBuiltInCmd(h_list[j]->str, argc, argv)) {
+            exit(0);
+          } else {
+            printf("not exec built in cmd.\n");
+            execvp(h_list[0]->str, argv);
+          }
+        }
+      }
+      close(fd[0]);
+      close(fd[1]);
+
+      while (wait(&status) != -1)
+        ;
+
+      free(pid);
+    }
   }
   return 0;
 }
@@ -130,10 +191,12 @@ int runBuiltInCmd(char* cmd_name, int argc, char* argv[]) {
     return 0;
   }
 
+  /*
   if (strcmp(cmd_name, "ls") == 0) {
     ls(argc, argv);
     return 0;
   }
+  */
 
   return -1;
 }
@@ -469,7 +532,6 @@ int parseCmdArgs(int argc, char* argv[], findArgs_t* fa) {
   char* tparam = NULL;
   int opt = 0;
   int longindex = 0;
-
 
   while ((opt = getopt_long_only(argc, argv, "n:pt:", longopts, &longindex)) !=
          -1) {
