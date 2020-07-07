@@ -30,6 +30,9 @@ void find_main(char* name, char* base_path, unsigned char type, int opt_bit);
 unsigned char getTypeOpt(char* opt);
 char* getName(char* name);
 
+// history
+char replaceHistory2Cmd(char* buf);
+
 char cwd[BUFSIZ];
 
 const char* current_dir = ".";
@@ -57,7 +60,7 @@ int main(void) {
 
     word_t** h_list;
     int ik = merge_split_shell(&h_list, buf);
-    printf("%d\n", ik);
+    // printf("%d\n", ik);
 
     if (ik < 2) {
       //パイプ処理なし
@@ -75,15 +78,16 @@ int main(void) {
         if (p->token == ARGUMENT) {
           argv[i] = (char*)malloc(sizeof(char) * 32);
           strcpy(argv[i], p->str);
+          // strcpy(argv[i], replaceHistory2Cmd(p->str));
           i++;
         }
       }
       argv[argc] = NULL;
-      if (runBuiltInCmd(h_list[0]->str, argc, argv)) {
+      if (runBuiltInCmd(argv[0], argc, argv)) {
         pid_t pid;
         pid = fork();
         if (pid == 0) {
-          execvp(h_list[0]->str, argv);
+          execvp(argv[0], argv);
         } else {
           while (wait(&status) != -1)
             ;
@@ -114,14 +118,15 @@ int main(void) {
           if (p->token == ARGUMENT) {
             argv[i] = (char*)malloc(sizeof(char) * 32);
             strcpy(argv[i], p->str);
+            // strcpy(argv[i], replaceHistory2Cmd(p->str));
             i++;
           }
         }
         argv[argc] = NULL;
 
-        showWordList(h_list[j]);
+        // showWordList(h_list[j]);
         pid[j] = fork();
-        printf("%d\n", pid[j]);
+        // printf("%d\n", pid[j]);
 
         if (pid[j] == 0) {
           if (j == ik - 1) {
@@ -139,11 +144,10 @@ int main(void) {
             close(fd[1]);
           }
 
-          if (!runBuiltInCmd(h_list[j]->str, argc, argv)) {
+          if (!runBuiltInCmd(argv[0], argc, argv)) {
             exit(0);
           } else {
-            printf("not exec built in cmd.\n");
-            execvp(h_list[0]->str, argv);
+            execvp(argv[0], argv);
           }
         }
       }
@@ -178,6 +182,7 @@ void changeDirectory(int argc, char* argv[]) {
   } else {
     strcpy(cwd, tmp_path);
   }
+  printf("%s\n", cwd);
 }
 
 int runBuiltInCmd(char* cmd_name, int argc, char* argv[]) {
@@ -191,14 +196,27 @@ int runBuiltInCmd(char* cmd_name, int argc, char* argv[]) {
     return 0;
   }
 
-  /*
   if (strcmp(cmd_name, "ls") == 0) {
     ls(argc, argv);
     return 0;
   }
-  */
+
+  if(strcmp(cmd_name, "exit") == 0){
+    exit(EXIT_SUCCESS);
+  }
 
   return -1;
+}
+
+char replaceHistory2Cmd(char* buf) {
+  if (buf[0] != '!') {
+    return *buf;
+  }
+
+  char num[BUFSIZ];
+  for (int i = 0; buf[i] != ' '; i++) {
+    num[i] = buf[i + 1];
+  }
 }
 
 /********** ls ***************/
