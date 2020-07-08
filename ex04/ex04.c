@@ -12,6 +12,19 @@
 #include "find-argv.h"
 #include "split.h"
 
+struct option longopts[] = {
+    {"name", required_argument, NULL, 'n'},
+    {"type", required_argument, NULL, 't'},
+    {"print", no_argument, NULL, 'p'},
+    {0, 0, 0, 0},
+};
+
+typedef struct History {
+  int num;
+  char* cmd;
+  struct History* next;
+} History_t;
+
 extern void chomp(char* line);
 extern int merge_split_shell(word_t*** head_list, char* src);
 extern void showWordList(word_t* m);
@@ -31,9 +44,14 @@ unsigned char getTypeOpt(char* opt);
 char* getName(char* name);
 
 // history
-char replaceHistory2Cmd(char* buf);
+int history(void);
+int registerHistory(char* cmd);
+char* replaceHistory2Cmd(char* buf);
+int parseCmdForHistory(char* buf);
 
+// global variable
 char cwd[BUFSIZ];
+History_t* HISTORY_HEAD = NULL;
 
 const char* current_dir = ".";
 const char* up_dir = "..";
@@ -58,6 +76,15 @@ int main(void) {
     if (buf[0] == '\0')
       continue;
 
+    if(parseCmdForHistory(buf)){
+      continue;
+    }
+
+    if (registerHistory(buf)) {
+      perror("history:");
+      exit(EXIT_FAILURE);
+    }
+
     word_t** h_list;
     int ik = merge_split_shell(&h_list, buf);
     // printf("%d\n", ik);
@@ -78,7 +105,6 @@ int main(void) {
         if (p->token == ARGUMENT) {
           argv[i] = (char*)malloc(sizeof(char) * 32);
           strcpy(argv[i], p->str);
-          // strcpy(argv[i], replaceHistory2Cmd(p->str));
           i++;
         }
       }
@@ -118,7 +144,6 @@ int main(void) {
           if (p->token == ARGUMENT) {
             argv[i] = (char*)malloc(sizeof(char) * 32);
             strcpy(argv[i], p->str);
-            // strcpy(argv[i], replaceHistory2Cmd(p->str));
             i++;
           }
         }
@@ -201,23 +226,132 @@ int runBuiltInCmd(char* cmd_name, int argc, char* argv[]) {
     return 0;
   }
 
-  if(strcmp(cmd_name, "exit") == 0){
+  if (strcmp(cmd_name, "exit") == 0) {
     exit(EXIT_SUCCESS);
+  }
+
+  if (strcmp(cmd_name, "history") == 0) {
+    history();
+    return 0;
   }
 
   return -1;
 }
 
-char replaceHistory2Cmd(char* buf) {
+/************** History ******************/
+
+int history(void) {
+  History_t* p = HISTORY_HEAD;
+  while (p != NULL) {
+    printf("%2d  %s\n", p->num, p->cmd);
+    p = p->next;
+  }
+  return 0;
+}
+
+char* replaceHistory2Cmd(char* buf) {
   if (buf[0] != '!') {
-    return *buf;
+    return buf;
   }
 
-  char num[BUFSIZ];
-  for (int i = 0; buf[i] != ' '; i++) {
-    num[i] = buf[i + 1];
+  char copy[BUFSIZ];
+  char* p = copy;
+  char* q = buf;
+  q++;
+  while (*q != ' ' && *q != '\0') {
+    *p = *q;
+    p++;
+    q++;
   }
+  *p = '\0';
+
+  int cmd_num = atoi(copy);
+  printf("%d\n", cmd_num);
+
+  if (cmd_num == 0) {
+    return buf;
+  }
+
+  if (HISTORY_HEAD == NULL) {
+    printf("history does not exsit.\n");
+    return NULL;
+  }
+
+  History_t* list_p = HISTORY_HEAD;
+  while (list_p != NULL) {
+    if (list_p->num == cmd_num) {
+      return list_p->cmd;
+    }
+    list_p = list_p->next;
+  }
+
+  printf("!%d: event not found.\n", cmd_num);
+  return NULL;
 }
+
+int registerHistory(char* buf) {
+  int length = strlen(buf) + 1;
+  History_t* list = (History_t*)malloc(sizeof(History_t));
+  if (list == NULL) {
+    return -1;
+  }
+
+  list->cmd = (char*)malloc(sizeof(char) * length);
+  if (list->cmd == NULL) {
+    return -1;
+  }
+
+  strcpy(list->cmd, buf);
+  list->next = NULL;
+
+  if (HISTORY_HEAD == NULL) {
+    HISTORY_HEAD = list;
+    list->num = 1;
+  } else {
+    History_t* p = HISTORY_HEAD;
+    int count = 2;
+    while (p->next != NULL) {
+      p = p->next;
+      count++;
+    }
+    p->next = list;
+    list->num = count;
+  }
+  return 0;
+}
+
+int parseCmdForHistory(char* buf) {
+  char* str_p = buf;
+  int before_len, after_len;
+  while (*str_p != '\0') {
+    before_len = 0;
+    after_len = 0;
+    if (*str_p == '!') {
+      char* p1 = str_p;
+      while (*str_p != ' ' && *str_p != '\0') {
+        str_p++;
+        before_len++;
+      }
+      char before_str[64];
+      strncpy(before_str, p1, before_len);
+      char* after_str = replaceHistory2Cmd(before_str);
+      if(after_str == NULL)
+      {
+        return -1;
+      }
+      after_len = strlen(after_str);
+      char* p2 = p1 + before_len;
+      memmove(p1+after_len,p2,strlen(p2)+1);
+      memcpy(p1,after_str,after_len);
+      str_p += after_len;
+    }
+    str_p++;
+  }
+  printf("replace:%s\n",buf);
+  return 0;
+}
+
+/************** end History ******************/
 
 /********** ls ***************/
 
@@ -332,13 +466,6 @@ void getMode(mode_t mode, char* str) {
 /****************** end ls ********************/
 
 /***************** find *********************/
-
-struct option longopts[] = {
-    {"name", required_argument, NULL, 'n'},
-    {"type", required_argument, NULL, 't'},
-    {"print", no_argument, NULL, 'p'},
-    {0, 0, 0, 0},
-};
 /**
  * @brief コマンドライン引数からオプションと引数に分解。
  *
