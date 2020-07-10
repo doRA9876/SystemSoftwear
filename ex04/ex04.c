@@ -1,4 +1,5 @@
 #include <dirent.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <limits.h>
 #include <stdio.h>
@@ -76,7 +77,7 @@ int main(void) {
     if (buf[0] == '\0')
       continue;
 
-    if(parseCmdForHistory(buf)){
+    if (parseCmdForHistory(buf)) {
       continue;
     }
 
@@ -92,35 +93,82 @@ int main(void) {
     if (ik < 2) {
       //パイプ処理なし
       int argc = 0;
+      int ifd = -1;
+      int ofd = -1;
       word_t* p = h_list[0];
       while (p != NULL) {
         if (p->token == ARGUMENT)
           argc++;
+
+        if (p->token == IN) {
+          ifd = open(p->str, O_RDONLY, 0644);
+        }
+
+        if (p->token == OUT) {
+          ofd = open(p->str, (O_WRONLY | O_CREAT | O_TRUNC), 0644);
+        }
         p = p->next;
       }
 
       char** argv = (char**)malloc(sizeof(char*) * (argc + 1));
+      if(argv == NULL){
+        exit(EXIT_FAILURE);
+      }
       p = h_list[0];
       for (int i = 0; i < argc; p = p->next) {
         if (p->token == ARGUMENT) {
           argv[i] = (char*)malloc(sizeof(char) * 32);
+          if(argv[i] == NULL){
+            exit(EXIT_FAILURE);
+          }
           strcpy(argv[i], p->str);
           i++;
         }
       }
       argv[argc] = NULL;
-      if (runBuiltInCmd(argv[0], argc, argv)) {
-        pid_t pid;
-        pid = fork();
+
+      if (ifd != -1 || ofd != -1) {
+        pid_t pid = fork();
+
         if (pid == 0) {
-          execvp(argv[0], argv);
-        } else {
-          while (wait(&status) != -1)
-            ;
+          if (ifd != -1) {
+            dup2(ifd, STDIN_FILENO);
+            close(ifd);
+          }
+          if (ofd != -1) {
+            dup2(ofd, STDOUT_FILENO);
+            close(ofd);
+          }
+
+          if (!runBuiltInCmd(argv[0], argc, argv)) {
+            exit(0);
+          } else {
+            execvp(argv[0], argv);
+          }
+        }
+        while (wait(&status) != pid)
+          ;
+
+        if (ifd != -1)
+          close(ifd);
+        if (ofd != -1)
+          close(ofd);
+      } else {
+        if (runBuiltInCmd(argv[0], argc, argv)) {
+          pid_t pid = fork();
+          if (pid == 0) {
+            execvp(argv[0], argv);
+          } else {
+            while (wait(&status) != -1)
+              ;
+          }
         }
       }
     } else {
       pid_t* pid = (pid_t*)malloc(sizeof(pid_t) * ik);
+      if(pid == NULL){
+        exit(EXIT_FAILURE);
+      }
       int fd[2];
 
       if (pipe(fd) == -1) {
@@ -129,20 +177,37 @@ int main(void) {
       }
 
       for (int j = ik - 1; j > -1; j--) {
+        int ifd = -1;
+        int ofd = -1;
         // printf("j:%d\n", j);
         int argc = 0;
         word_t* p = h_list[j];
         while (p != NULL) {
           if (p->token == ARGUMENT)
             argc++;
+
+          if (p->token == IN) {
+            ifd = open(p->str, O_RDONLY, 0644);
+          }
+
+          if (p->token == OUT) {
+            ofd = open(p->str, (O_WRONLY | O_CREAT | O_TRUNC), 0644);
+          }
+
           p = p->next;
         }
 
         char** argv = (char**)malloc(sizeof(char*) * argc);
+        if(argv == NULL){
+          exit(EXIT_FAILURE);
+        }
         p = h_list[j];
         for (int i = 0; i < argc; p = p->next) {
           if (p->token == ARGUMENT) {
             argv[i] = (char*)malloc(sizeof(char) * 32);
+            if(argv[i] == NULL){
+              exit(EXIT_FAILURE);
+            }
             strcpy(argv[i], p->str);
             i++;
           }
@@ -154,20 +219,26 @@ int main(void) {
         // printf("%d\n", pid[j]);
 
         if (pid[j] == 0) {
-          if (j == ik - 1) {
-            dup2(fd[0], STDIN_FILENO);
-            close(fd[0]);
-            close(fd[1]);
-          } else if (j == 0) {
+          if (j != ik - 1) {
             dup2(fd[1], STDOUT_FILENO);
-            close(fd[0]);
-            close(fd[1]);
-          } else {
-            dup2(fd[0], STDIN_FILENO);
-            dup2(fd[1], STDOUT_FILENO);
-            close(fd[0]);
-            close(fd[1]);
           }
+
+          if (j != 0) {
+            dup2(fd[0], STDIN_FILENO);
+          }
+
+          if (ofd != -1) {
+            dup2(ofd, STDOUT_FILENO);
+            close(ofd);
+          }
+
+          if (ifd != -1) {
+            dup2(ifd, STDIN_FILENO);
+            close(ifd);
+          }
+
+          close(fd[0]);
+          close(fd[1]);
 
           if (!runBuiltInCmd(argv[0], argc, argv)) {
             exit(0);
@@ -175,6 +246,12 @@ int main(void) {
             execvp(argv[0], argv);
           }
         }
+
+        if (ifd != -1)
+          close(ifd);
+
+        if (ofd != -1)
+          close(ofd);
       }
       close(fd[0]);
       close(fd[1]);
@@ -186,28 +263,6 @@ int main(void) {
     }
   }
   return 0;
-}
-
-void changeDirectory(int argc, char* argv[]) {
-  // argv[1]:dest
-  char tmp_path[PATH_MAX];
-
-  if (argv[1][0] == '/') {
-    // absolute path
-    strcpy(tmp_path, argv[1]);
-  } else {
-    // relative path
-    char p[PATH_MAX];
-    snprintf(p, PATH_MAX, "%s/%s", cwd, argv[1]);
-    realpath(p, tmp_path);
-  }
-
-  if (opendir(tmp_path) == NULL) {
-    perror(tmp_path);
-  } else {
-    strcpy(cwd, tmp_path);
-  }
-  printf("%s\n", cwd);
 }
 
 int runBuiltInCmd(char* cmd_name, int argc, char* argv[]) {
@@ -237,6 +292,30 @@ int runBuiltInCmd(char* cmd_name, int argc, char* argv[]) {
 
   return -1;
 }
+
+/************* change directory ******************/
+void changeDirectory(int argc, char* argv[]) {
+  // argv[1]:dest
+  char tmp_path[PATH_MAX];
+
+  if (argv[1][0] == '/') {
+    // absolute path
+    strcpy(tmp_path, argv[1]);
+  } else {
+    // relative path
+    char p[PATH_MAX];
+    snprintf(p, PATH_MAX, "%s/%s", cwd, argv[1]);
+    realpath(p, tmp_path);
+  }
+
+  if (opendir(tmp_path) == NULL) {
+    perror(tmp_path);
+  } else {
+    strcpy(cwd, tmp_path);
+  }
+  printf("%s\n", cwd);
+}
+/************* end change directory ******************/
 
 /************** History ******************/
 
@@ -335,19 +414,17 @@ int parseCmdForHistory(char* buf) {
       char before_str[64];
       strncpy(before_str, p1, before_len);
       char* after_str = replaceHistory2Cmd(before_str);
-      if(after_str == NULL)
-      {
+      if (after_str == NULL) {
         return -1;
       }
       after_len = strlen(after_str);
       char* p2 = p1 + before_len;
-      memmove(p1+after_len,p2,strlen(p2)+1);
-      memcpy(p1,after_str,after_len);
+      memmove(p1 + after_len, p2, strlen(p2) + 1);
+      memcpy(p1, after_str, after_len);
       str_p += after_len;
     }
     str_p++;
   }
-  printf("replace:%s\n",buf);
   return 0;
 }
 
