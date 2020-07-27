@@ -1,0 +1,5 @@
+short message:http://150.65.205.18/index.html
+long message:http://150.65..205.18/long.html
+image:http://150.65.205.18/android.jpg
+one image:http://150.65.205.18/image.html
+many images:http://150.65.205.18/images.html
