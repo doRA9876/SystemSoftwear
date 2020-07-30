@@ -1,34 +1,57 @@
 
+#include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #define INFO_SIZE 1024
+#define FD_NUM 10
 
 typedef struct HeadderInfo {
   char info[INFO_SIZE];
   struct HeadderInfo* next;
 } headderInfo_t;
 
-void http(int sockfd);
+typedef struct Instance {
+  int c2p_fd;
+  int p2s_fd;
+  headderInfo_t* head;
+  char host[256];
+  char path[256];
+  int port;
+} instance_t;
+
+int http(int sockfd, instance_t* inst);
 int send_msg(int fd, char* msg);
 void parth_uri2host(char* uri, char* host, char* path, int* port);
-headderInfo_t* client(char* host, char* path, int port);
+int client(char* host, char* path, int port);
 void send_request(int socket_fd, char path[], char host[], int port);
 headderInfo_t* store_headderInfo(char* buf);
 void send_httpHeadder(int fd, headderInfo_t* head);
+void send_data(instance_t* inst);
+void recive_data(instance_t* inst);
 
 int main(void) {
-  int listenfd, connfd, nbytes;
+  int listen_fd, nbytes;
+  int client2proxy_fd[FD_NUM];
+  int proxy2server_fd[FD_NUM];
+  instance_t connect_instance[FD_NUM];
   char buf[BUFSIZ];
   struct sockaddr_in servaddr;
 
-  if ((listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+  for (int i = 0; i < FD_NUM; i++) {
+    client2proxy_fd[i] = -1;
+    proxy2server_fd[i] = -1;
+  }
+
+  if ((listen_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
     perror("socket");
     exit(1);
   }
@@ -38,69 +61,116 @@ int main(void) {
   servaddr.sin_port = htons(10000);
   servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-  if (bind(listenfd, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
+  if (bind(listen_fd, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
     perror("bind");
     exit(1);
   }
 
-  if (listen(listenfd, 5) < 0) {
+  if (listen(listen_fd, 5) < 0) {
     perror("listen");
     exit(1);
   }
 
+  fd_set read_fds;
   while (1) {
-    if ((connfd = accept(listenfd, (struct sockaddr*)NULL, NULL)) < 0) {
-      perror("accept");
-      exit(1);
+    struct timeval tv;
+    FD_ZERO(&read_fds);
+    FD_SET(listen_fd, &read_fds);
+    int maxfd = listen_fd;
+
+    for (int i = 0; i < FD_NUM; i++) {
+      if (client2proxy_fd[i] != -1) {
+        FD_SET(client2proxy_fd[i], &read_fds);
+        if (client2proxy_fd[i] > maxfd)
+          maxfd = client2proxy_fd[i];
+      }
+      if (proxy2server_fd[i] != -1) {
+        FD_SET(proxy2server_fd[i], &read_fds);
+        if (proxy2server_fd[i] > maxfd)
+          maxfd = proxy2server_fd[i];
+      }
     }
-    http(connfd);
-    close(connfd);
+
+    tv.tv_sec = 10;
+    tv.tv_usec = 500000;
+
+    int connect = select(maxfd + 1, &read_fds, NULL, NULL, &tv);
+    if (connect < 0) {
+      if (errno == EINTR)
+        continue;
+    } else if (connect == 0) {
+      continue;
+    } else {
+      if (FD_ISSET(listen_fd, &read_fds)) {
+        for (int i = 0; i < FD_NUM; i++) {
+          if (client2proxy_fd[i] == -1) {
+            if ((client2proxy_fd[i] =
+                     accept(listen_fd, (struct sockaddr*)NULL, NULL)) < 0) {
+              perror("accept");
+              exit(1);
+            }
+            break;
+          }
+        }
+      }
+
+      for (int i = 0; i < FD_NUM; i++) {
+        if (FD_ISSET(client2proxy_fd[i], &read_fds)) {
+          proxy2server_fd[i] = http(client2proxy_fd[i], connect_instance + i);
+          connect_instance[i].c2p_fd = client2proxy_fd[i];
+          connect_instance[i].p2s_fd = proxy2server_fd[i];
+          client2proxy_fd[i] = -1;
+        }
+      }
+
+      for (int i = 0; i < FD_NUM; i++) {
+        if (FD_ISSET(proxy2server_fd[i], &read_fds)) {
+          recive_data(connect_instance + i);
+          close(proxy2server_fd[i]);
+          send_data(connect_instance + i);
+          close(client2proxy_fd[i]);
+          proxy2server_fd[i] = -1;
+        }
+      }
+    }
   }
+
+  for (int i = 0; i < FD_NUM; i++) {
+    close(client2proxy_fd[i]);
+  }
+
+  close(listen_fd);
+  return 0;
 }
 
-void http(int sockfd) {
+int http(int sockfd, instance_t* inst) {
   char buf[BUFSIZ];
   char method[16];
   char uri_addr[256];
-  char host[256] = "localhost";
-  char path[256] = "/";
-  int port = 80;
   char http_ver[64];
+
+  strncpy(inst->host, "localhost", 256);
+  strncpy(inst->path, "/", 256);
+  inst->port = 80;
 
   if (read(sockfd, buf, BUFSIZ) <= 0) {
     fprintf(stderr, "error: reading a request.\n");
+    return -1;
   } else {
     sscanf(buf, "%s %s %s", method, uri_addr, http_ver);
 
-    parth_uri2host(uri_addr, host, path, &port);
+    parth_uri2host(uri_addr, inst->host, inst->path, &inst->port);
 
     printf("method:%s http version:%s host:%s path:%s port:%d\n", method,
-           http_ver, host, path, port);
+           http_ver, inst->host, inst->path, inst->port);
   }
 
-  headderInfo_t* head = NULL;
-  if ((head = client(host, path, port)) == NULL) {
-    return;
+  int proxy2server_fd = -1;
+  if ((proxy2server_fd = client(inst->host, inst->path, inst->port)) == -1) {
+    return -1;
   }
-
-  int read_fd = open(path + 1, O_RDONLY, 0666);
-  if (read_fd == -1) {
-    send_msg(sockfd, "HTTP/1.0 404 Not Found");
-    close(read_fd);
-    return;
-  }
-
-  send_httpHeadder(sockfd, head);
-
-  int length = 0;
-  while ((length = read(read_fd, buf, BUFSIZ)) > 0) {
-    if (write(sockfd, buf, length) != length) {
-      fprintf(stderr, "error: writing a response.\n");
-      break;
-    }
-  }
-
-  close(read_fd);
+  inst->p2s_fd = proxy2server_fd;
+  return proxy2server_fd;
 }
 
 int send_msg(int fd, char* msg) {
@@ -114,33 +184,7 @@ int send_msg(int fd, char* msg) {
   return length;
 }
 
-void parth_uri2host(char* uri, char* host, char* path, int* port) {
-  char* p;
-
-  p = strchr(++uri, '/'); 
-  if (p != NULL) {
-    strcpy(path, p); 
-    *p = '\0';
-    strcpy(host, uri); 
-  } else { 
-    strcpy(host, uri); 
-  }
-
-  if (*(path + 1) == '\0') {
-    strcpy(path + 1, "index.html");
-  }
-
-  p = strchr(host, ':'); 
-  if (p != NULL) {
-    *port = atoi(p + 1); 
-    if (*port <= 0) { 
-      *port = 80;     
-    }
-    *p = '\0';
-  }
-}
-
-headderInfo_t* client(char* host, char* path, int port) {
+int client(char* host, char* path, int port) {
   int sockfd;
   struct hostent* servhost;
   struct sockaddr_in server;
@@ -166,47 +210,43 @@ headderInfo_t* client(char* host, char* path, int port) {
 
   if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
     fprintf(stderr, "ソケットの生成に失敗しました。\n");
-    return NULL;
+    return -1;
   }
   if (connect(sockfd, (struct sockaddr*)&server, sizeof(server)) == -1) {
     fprintf(stderr, "connect に失敗しました。\n");
-    return NULL;
+    return -1;
   }
 
   printf("http://%s %s %dを取得します。\n\n", host, path, port);
   send_request(sockfd, path, host, port);
 
-  int ofd = open(path + 1, (O_WRONLY | O_CREAT | O_TRUNC), 0644);
+  return sockfd;
+}
 
-  /* Headder processing */
-  char buf[BUFSIZ];
-  int read_size;
-  read_size = read(sockfd, buf, BUFSIZ);
-  char* p2 = strstr(buf, "\r\n\r\n");
-  p2 += 4;
-  read_size = read_size - ((p2 - buf) / sizeof(char));
-  headderInfo_t* head = store_headderInfo(buf);
+void parth_uri2host(char* uri, char* host, char* path, int* port) {
+  char* p;
 
-  headderInfo_t* h = head;
-  while (h != NULL) {
-    printf("%s\n", h->info);
-    h = h->next;
+  p = strchr(++uri, '/');
+  if (p != NULL) {
+    strcpy(path, p);
+    *p = '\0';
+    strcpy(host, uri);
+  } else {
+    strcpy(host, uri);
   }
 
-  if (read_size > 0) {
-    write(ofd, p2, read_size);
-    while (1) {
-      read_size = read(sockfd, buf, BUFSIZ);
-      if (read_size > 0) {
-        write(ofd, buf, read_size);
-      } else {
-        break;
-      }
+  if (*(path + 1) == '\0') {
+    strcpy(path + 1, "index.html");
+  }
+
+  p = strchr(host, ':');
+  if (p != NULL) {
+    *port = atoi(p + 1);
+    if (*port <= 0) {
+      *port = 80;
     }
+    *p = '\0';
   }
-
-  close(sockfd);
-  return head;
 }
 
 void send_request(int socket_fd, char path[], char host[], int port) {
@@ -266,4 +306,56 @@ void send_httpHeadder(int fd, headderInfo_t* head) {
     h = h->next;
   }
   send_msg(fd, "\r\n");
+}
+
+void recive_data(instance_t* inst) {
+  char buf[BUFSIZ];
+  int ofd = open(inst->path + 1, (O_WRONLY | O_CREAT | O_TRUNC), 0644);
+
+  int read_size;
+  read_size = read(inst->p2s_fd, buf, BUFSIZ);
+  char* p2 = strstr(buf, "\r\n\r\n");
+  p2 += 4;
+  read_size = read_size - ((p2 - buf) / sizeof(char));
+  inst->head = store_headderInfo(buf);
+
+  headderInfo_t* h = inst->head;
+  while (h != NULL) {
+    printf("%s\n", h->info);
+    h = h->next;
+  }
+
+  if (read_size > 0) {
+    write(ofd, p2, read_size);
+    while (1) {
+      read_size = read(inst->p2s_fd, buf, BUFSIZ);
+      if (read_size > 0) {
+        write(ofd, buf, read_size);
+      } else {
+        break;
+      }
+    }
+  }
+}
+
+void send_data(instance_t* inst) {
+  char buf[BUFSIZ];
+  send_httpHeadder(inst->c2p_fd, inst->head);
+
+  int read_fd = open(inst->path + 1, O_RDONLY, 0666);
+  if (read_fd == -1) {
+    send_msg(inst->c2p_fd, "HTTP/1.0 404 Not Found");
+    close(read_fd);
+    return;
+  }
+
+  int length = 0;
+  while ((length = read(read_fd, buf, BUFSIZ)) > 0) {
+    if (write(inst->c2p_fd, buf, length) != length) {
+      fprintf(stderr, "error: writing a response.\n");
+      break;
+    }
+  }
+
+  close(read_fd);
 }

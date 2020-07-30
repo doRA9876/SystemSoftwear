@@ -10,7 +10,7 @@ server: server.o
 	rm $@.o
 
 proxy-b: proxy-b.o
-	gcc -o $@.out $^
+	gcc -o a.out $^
 	rm $@.o
 
 clean:
