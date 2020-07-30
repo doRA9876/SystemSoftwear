@@ -28,10 +28,10 @@ typedef struct Instance {
   int port;
 } instance_t;
 
-int http(int sockfd, instance_t* inst);
+int create_instance(int sockfd, instance_t* inst);
+int connect_server(char* host, char* path, int port);
 int send_msg(int fd, char* msg);
-void parth_uri2host(char* uri, char* host, char* path, int* port);
-int client(char* host, char* path, int port);
+void parse_uri2host(char* uri, char* host, char* path, int* port);
 void send_request(int socket_fd, char path[], char host[], int port);
 headderInfo_t* store_headderInfo(char* buf);
 void send_httpHeadder(int fd, headderInfo_t* head);
@@ -116,7 +116,7 @@ int main(void) {
 
       for (int i = 0; i < FD_NUM; i++) {
         if (FD_ISSET(client2proxy_fd[i], &read_fds)) {
-          proxy2server_fd[i] = http(client2proxy_fd[i], connect_instance + i);
+          proxy2server_fd[i] = create_instance(client2proxy_fd[i], connect_instance + i);
           connect_instance[i].c2p_fd = client2proxy_fd[i];
           connect_instance[i].p2s_fd = proxy2server_fd[i];
           client2proxy_fd[i] = -1;
@@ -143,7 +143,14 @@ int main(void) {
   return 0;
 }
 
-int http(int sockfd, instance_t* inst) {
+/**
+ * @brief Create a connection instance
+ * 
+ * @param client2proxy_fd file descriptor between client to server
+ * @param inst instance structure
+ * @return [int] file descriptor from proxy to server
+ */
+int create_instance(int client2proxy_fd, instance_t* inst) {
   char buf[BUFSIZ];
   char method[16];
   char uri_addr[256];
@@ -153,26 +160,33 @@ int http(int sockfd, instance_t* inst) {
   strncpy(inst->path, "/", 256);
   inst->port = 80;
 
-  if (read(sockfd, buf, BUFSIZ) <= 0) {
+  if (read(client2proxy_fd, buf, BUFSIZ) <= 0) {
     fprintf(stderr, "error: reading a request.\n");
     return -1;
   } else {
     sscanf(buf, "%s %s %s", method, uri_addr, http_ver);
 
-    parth_uri2host(uri_addr, inst->host, inst->path, &inst->port);
+    parse_uri2host(uri_addr, inst->host, inst->path, &inst->port);
 
     printf("method:%s http version:%s host:%s path:%s port:%d\n", method,
            http_ver, inst->host, inst->path, inst->port);
   }
 
   int proxy2server_fd = -1;
-  if ((proxy2server_fd = client(inst->host, inst->path, inst->port)) == -1) {
+  if ((proxy2server_fd = connect_server(inst->host, inst->path, inst->port)) == -1) {
     return -1;
   }
   inst->p2s_fd = proxy2server_fd;
   return proxy2server_fd;
 }
 
+/**
+ * @brief send message using file descriptor
+ * 
+ * @param fd file descriptor 
+ * @param msg message to send
+ * @return [int] length of message sent
+ */
 int send_msg(int fd, char* msg) {
   int length;
   length = strlen(msg);
@@ -184,16 +198,22 @@ int send_msg(int fd, char* msg) {
   return length;
 }
 
-int client(char* host, char* path, int port) {
+/**
+ * @brief connect to server using host, path and port number.
+ * 
+ * @param host destination host name 
+ * @param path file path
+ * @param port port number
+ * @return [int] file descriptor between proxy to server
+ */
+int connect_server(char* host, char* path, int port) {
   int sockfd;
   struct hostent* servhost;
   struct sockaddr_in server;
 
-  // printf("client side: host:%s path:%s port:%d\n", host, path, port);
-
   servhost = gethostbyname(host);
   if (servhost == NULL) {
-    fprintf(stderr, "[%s] から IP アドレスへの変換に失敗しました。\n", host);
+    fprintf(stderr, "Failed to convert [%s] to IP address.\n", host);
     return 0;
   }
 
@@ -209,21 +229,29 @@ int client(char* host, char* path, int port) {
   bcopy(servhost->h_addr, &server.sin_addr, servhost->h_length);
 
   if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-    fprintf(stderr, "ソケットの生成に失敗しました。\n");
+    fprintf(stderr, "Failed to generate a socket.\n");
     return -1;
   }
   if (connect(sockfd, (struct sockaddr*)&server, sizeof(server)) == -1) {
-    fprintf(stderr, "connect に失敗しました。\n");
+    fprintf(stderr, "Failed to connect.\n");
     return -1;
   }
 
-  printf("http://%s %s %dを取得します。\n\n", host, path, port);
+  printf("Gets http://%s %s %d.\n\n", host, path, port);
   send_request(sockfd, path, host, port);
 
   return sockfd;
 }
 
-void parth_uri2host(char* uri, char* host, char* path, int* port) {
+/**
+ * @brief convert URI to host, path and port
+ * 
+ * @param uri destination URI 
+ * @param host destination host name 
+ * @param path file path 
+ * @param port port number
+ */
+void parse_uri2host(char* uri, char* host, char* path, int* port) {
   char* p;
 
   p = strchr(++uri, '/');
@@ -249,22 +277,36 @@ void parth_uri2host(char* uri, char* host, char* path, int* port) {
   }
 }
 
-void send_request(int socket_fd, char path[], char host[], int port) {
+/**
+ * @brief send a request to server
+ * 
+ * @param fd file descriptor between proxy to server 
+ * @param path file path
+ * @param host destination host 
+ * @param port port number
+ */
+void send_request(int fd, char path[], char host[], int port) {
   char send_buf[BUFSIZ];
 
   sprintf(send_buf, "GET %s HTTP/1.0\r\n", path);
   printf("%s\n", send_buf);
-  write(socket_fd, send_buf, strlen(send_buf));
+  write(fd, send_buf, strlen(send_buf));
 
   sprintf(send_buf, "Host: %s:%d\r\n", host, port);
   printf("%s\n", send_buf);
-  write(socket_fd, send_buf, strlen(send_buf));
+  write(fd, send_buf, strlen(send_buf));
 
   sprintf(send_buf, "\r\n");
   printf("%s\n", send_buf);
-  write(socket_fd, send_buf, strlen(send_buf));
+  write(fd, send_buf, strlen(send_buf));
 }
 
+/**
+ * @brief store packet hedder
+ * 
+ * @param buf read buffer
+ * @return [headderInfo_t*] created list head  
+ */
 headderInfo_t* store_headderInfo(char* buf) {
   char copy[BUFSIZ];
   strncpy(copy, buf, BUFSIZ);
@@ -298,6 +340,12 @@ headderInfo_t* store_headderInfo(char* buf) {
   return HEAD;
 }
 
+/**
+ * @brief send HTTP headder to client
+ * 
+ * @param fd file descriptor 
+ * @param head list head
+ */
 void send_httpHeadder(int fd, headderInfo_t* head) {
   headderInfo_t* h = head;
   while (h != NULL) {
@@ -308,6 +356,11 @@ void send_httpHeadder(int fd, headderInfo_t* head) {
   send_msg(fd, "\r\n");
 }
 
+/**
+ * @brief recive data from server 
+ * 
+ * @param inst a instance structure 
+ */
 void recive_data(instance_t* inst) {
   char buf[BUFSIZ];
   int ofd = open(inst->path + 1, (O_WRONLY | O_CREAT | O_TRUNC), 0644);
@@ -338,6 +391,11 @@ void recive_data(instance_t* inst) {
   }
 }
 
+/**
+ * @brief send data to client
+ * 
+ * @param inst instance structure 
+ */
 void send_data(instance_t* inst) {
   char buf[BUFSIZ];
   send_httpHeadder(inst->c2p_fd, inst->head);
