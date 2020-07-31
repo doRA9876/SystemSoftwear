@@ -5,12 +5,8 @@ client: client.o
 	gcc -o $@.out $^
 	rm $@.o
 
-server: server.o
+proxy: proxy.o
 	gcc -o $@.out $^
-	rm $@.o
-
-proxy-b: proxy-b.o
-	gcc -o a.out $^
 	rm $@.o
 
 clean:

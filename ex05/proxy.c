@@ -1,15 +1,15 @@
-
-#include <errno.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <sys/time.h>
 #include <unistd.h>
+// #include <netinet/in.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <sys/select.h>
+#include <sys/stat.h>
+// #include <sys/socket.h>
+// #include <sys/time.h>
+#include <errno.h>
 
 #define INFO_SIZE 1024
 #define FD_NUM 10
@@ -22,7 +22,7 @@ typedef struct HeadderInfo {
 typedef struct Instance {
   int c2p_fd;
   int p2s_fd;
-  headderInfo_t* head;
+  headderInfo_t* headder;
   char host[256];
   char path[256];
   int port;
@@ -116,7 +116,8 @@ int main(void) {
 
       for (int i = 0; i < FD_NUM; i++) {
         if (FD_ISSET(client2proxy_fd[i], &read_fds)) {
-          proxy2server_fd[i] = create_instance(client2proxy_fd[i], connect_instance + i);
+          proxy2server_fd[i] =
+              create_instance(client2proxy_fd[i], connect_instance + i);
           connect_instance[i].c2p_fd = client2proxy_fd[i];
           connect_instance[i].p2s_fd = proxy2server_fd[i];
           client2proxy_fd[i] = -1;
@@ -145,7 +146,7 @@ int main(void) {
 
 /**
  * @brief Create a connection instance
- * 
+ *
  * @param client2proxy_fd file descriptor between client to server
  * @param inst instance structure
  * @return [int] file descriptor from proxy to server
@@ -173,17 +174,25 @@ int create_instance(int client2proxy_fd, instance_t* inst) {
   }
 
   int proxy2server_fd = -1;
-  if ((proxy2server_fd = connect_server(inst->host, inst->path, inst->port)) == -1) {
+  if ((proxy2server_fd = connect_server(inst->host, inst->path, inst->port)) ==
+      -1) {
     return -1;
   }
   inst->p2s_fd = proxy2server_fd;
+
+  /*
+  char dir_name[16];
+  snprintf(dir_name, 16, "d%d", client2proxy_fd);
+  mkdir(dir_name, 700);
+  */
+
   return proxy2server_fd;
 }
 
 /**
  * @brief send message using file descriptor
- * 
- * @param fd file descriptor 
+ *
+ * @param fd file descriptor
  * @param msg message to send
  * @return [int] length of message sent
  */
@@ -200,8 +209,8 @@ int send_msg(int fd, char* msg) {
 
 /**
  * @brief connect to server using host, path and port number.
- * 
- * @param host destination host name 
+ *
+ * @param host destination host name
  * @param path file path
  * @param port port number
  * @return [int] file descriptor between proxy to server
@@ -245,10 +254,10 @@ int connect_server(char* host, char* path, int port) {
 
 /**
  * @brief convert URI to host, path and port
- * 
- * @param uri destination URI 
- * @param host destination host name 
- * @param path file path 
+ *
+ * @param uri destination URI
+ * @param host destination host name
+ * @param path file path
  * @param port port number
  */
 void parse_uri2host(char* uri, char* host, char* path, int* port) {
@@ -279,10 +288,10 @@ void parse_uri2host(char* uri, char* host, char* path, int* port) {
 
 /**
  * @brief send a request to server
- * 
- * @param fd file descriptor between proxy to server 
+ *
+ * @param fd file descriptor between proxy to server
  * @param path file path
- * @param host destination host 
+ * @param host destination host
  * @param port port number
  */
 void send_request(int fd, char path[], char host[], int port) {
@@ -303,9 +312,9 @@ void send_request(int fd, char path[], char host[], int port) {
 
 /**
  * @brief store packet hedder
- * 
+ *
  * @param buf read buffer
- * @return [headderInfo_t*] created list head  
+ * @return [headderInfo_t*] created list head
  */
 headderInfo_t* store_headderInfo(char* buf) {
   char copy[BUFSIZ];
@@ -342,8 +351,8 @@ headderInfo_t* store_headderInfo(char* buf) {
 
 /**
  * @brief send HTTP headder to client
- * 
- * @param fd file descriptor 
+ *
+ * @param fd file descriptor
  * @param head list head
  */
 void send_httpHeadder(int fd, headderInfo_t* head) {
@@ -357,22 +366,34 @@ void send_httpHeadder(int fd, headderInfo_t* head) {
 }
 
 /**
- * @brief recive data from server 
- * 
- * @param inst a instance structure 
+ * @brief recive data from server
+ *
+ * @param inst a instance structure
  */
 void recive_data(instance_t* inst) {
   char buf[BUFSIZ];
-  int ofd = open(inst->path + 1, (O_WRONLY | O_CREAT | O_TRUNC), 0644);
+
+  char* p = inst->path;
+  char* q = p;
+  while (*p != '\0') {
+    if (*p == '/' && *(p + 1) != '\0')
+      q = p + 1;
+    p++;
+  }
+
+  strncpy(inst->path, q, 256);
+  // printf("%s\n", q);
+
+  int ofd = open(inst->path, (O_WRONLY | O_CREAT | O_TRUNC), 0644);
 
   int read_size;
   read_size = read(inst->p2s_fd, buf, BUFSIZ);
   char* p2 = strstr(buf, "\r\n\r\n");
   p2 += 4;
   read_size = read_size - ((p2 - buf) / sizeof(char));
-  inst->head = store_headderInfo(buf);
+  inst->headder = store_headderInfo(buf);
 
-  headderInfo_t* h = inst->head;
+  headderInfo_t* h = inst->headder;
   while (h != NULL) {
     printf("%s\n", h->info);
     h = h->next;
@@ -393,14 +414,14 @@ void recive_data(instance_t* inst) {
 
 /**
  * @brief send data to client
- * 
- * @param inst instance structure 
+ *
+ * @param inst instance structure
  */
 void send_data(instance_t* inst) {
   char buf[BUFSIZ];
-  send_httpHeadder(inst->c2p_fd, inst->head);
+  send_httpHeadder(inst->c2p_fd, inst->headder);
 
-  int read_fd = open(inst->path + 1, O_RDONLY, 0666);
+  int read_fd = open(inst->path, O_RDONLY, 0666);
   if (read_fd == -1) {
     send_msg(inst->c2p_fd, "HTTP/1.0 404 Not Found");
     close(read_fd);
@@ -414,6 +435,8 @@ void send_data(instance_t* inst) {
       break;
     }
   }
+
+  // remove(inst->path + 1);
 
   close(read_fd);
 }
