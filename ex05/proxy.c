@@ -2,13 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-// #include <netinet/in.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <sys/select.h>
 #include <sys/stat.h>
-// #include <sys/socket.h>
-// #include <sys/time.h>
 #include <errno.h>
 
 #define INFO_SIZE 1024
@@ -37,6 +34,9 @@ headderInfo_t* store_headderInfo(char* buf);
 void send_httpHeadder(int fd, headderInfo_t* head);
 void send_data(instance_t* inst);
 void recive_data(instance_t* inst);
+void delete_headderInfo(instance_t* inst);
+
+char previous_host[BUFSIZ];
 
 int main(void) {
   int listen_fd, nbytes;
@@ -45,6 +45,8 @@ int main(void) {
   instance_t connect_instance[FD_NUM];
   char buf[BUFSIZ];
   struct sockaddr_in servaddr;
+
+  previous_host[0] = '\0';
 
   for (int i = 0; i < FD_NUM; i++) {
     client2proxy_fd[i] = -1;
@@ -91,7 +93,7 @@ int main(void) {
       }
     }
 
-    tv.tv_sec = 10;
+    tv.tv_sec = 3;
     tv.tv_usec = 500000;
 
     int connect = select(maxfd + 1, &read_fds, NULL, NULL, &tv);
@@ -99,6 +101,7 @@ int main(void) {
       if (errno == EINTR)
         continue;
     } else if (connect == 0) {
+      previous_host[0] = '\0';
       continue;
     } else {
       if (FD_ISSET(listen_fd, &read_fds)) {
@@ -116,11 +119,15 @@ int main(void) {
 
       for (int i = 0; i < FD_NUM; i++) {
         if (FD_ISSET(client2proxy_fd[i], &read_fds)) {
-          proxy2server_fd[i] =
-              create_instance(client2proxy_fd[i], connect_instance + i);
-          connect_instance[i].c2p_fd = client2proxy_fd[i];
-          connect_instance[i].p2s_fd = proxy2server_fd[i];
-          client2proxy_fd[i] = -1;
+          for (int j = 0; j < 10; j++) {
+            if (proxy2server_fd[j] == -1) {
+              proxy2server_fd[j] =
+                  create_instance(client2proxy_fd[i], connect_instance + j);
+              connect_instance[j].c2p_fd = client2proxy_fd[i];
+              connect_instance[j].p2s_fd = proxy2server_fd[j];
+              client2proxy_fd[i] = -1;
+            }
+          }
         }
       }
 
@@ -131,6 +138,7 @@ int main(void) {
           send_data(connect_instance + i);
           close(client2proxy_fd[i]);
           proxy2server_fd[i] = -1;
+          delete_headderInfo(connect_instance + i);
         }
       }
     }
@@ -179,12 +187,6 @@ int create_instance(int client2proxy_fd, instance_t* inst) {
     return -1;
   }
   inst->p2s_fd = proxy2server_fd;
-
-  /*
-  char dir_name[16];
-  snprintf(dir_name, 16, "d%d", client2proxy_fd);
-  mkdir(dir_name, 700);
-  */
 
   return proxy2server_fd;
 }
@@ -263,17 +265,26 @@ int connect_server(char* host, char* path, int port) {
 void parse_uri2host(char* uri, char* host, char* path, int* port) {
   char* p;
 
+  printf("\n\nURI:%s\n\n", uri);
+  printf("pre:%s\n", previous_host);
+
   p = strchr(++uri, '/');
   if (p != NULL) {
-    strcpy(path, p);
+    strncpy(path, p, 256);
     *p = '\0';
-    strcpy(host, uri);
+    strncpy(host, uri, 256);
   } else {
-    strcpy(host, uri);
+    if (strlen(previous_host) == 0) {
+      strncpy(previous_host, uri, 256);
+      strncpy(host, uri, 256);
+    } else {
+      strncpy(host, previous_host, 256);
+      strncpy(path, --uri, 256);
+    }
   }
 
   if (*(path + 1) == '\0') {
-    strcpy(path + 1, "index.html");
+    strncpy(path + 1, "index.html", 256);
   }
 
   p = strchr(host, ':');
@@ -283,6 +294,8 @@ void parse_uri2host(char* uri, char* host, char* path, int* port) {
       *port = 80;
     }
     *p = '\0';
+  }else{
+    *port = 80;
   }
 }
 
@@ -382,7 +395,6 @@ void recive_data(instance_t* inst) {
   }
 
   strncpy(inst->path, q, 256);
-  // printf("%s\n", q);
 
   int ofd = open(inst->path, (O_WRONLY | O_CREAT | O_TRUNC), 0644);
 
@@ -436,7 +448,20 @@ void send_data(instance_t* inst) {
     }
   }
 
-  // remove(inst->path + 1);
-
   close(read_fd);
+}
+
+/**
+ * @brief free headder list
+ *
+ * @param inst  instance structure
+ */
+void delete_headderInfo(instance_t* inst) {
+  headderInfo_t* p = inst->headder;
+
+  while (p != NULL) {
+    headderInfo_t* q = p;
+    p = p->next;
+    free(q);
+  }
 }
